@@ -77,5 +77,8 @@ async def stamp_service(files: List[UploadFile] = File(...)):
         for path in tmp_paths:
             os.remove(path)
 
+
+
 if __name__ == "__main__":
-    uvicorn.run("ocr_main:app",host="0.0.0.0",port=5110,reload=True)
+    #uvicorn.run("ocr_main:app",host="0.0.0.0",port=5110,reload=True)
+    pass

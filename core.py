@@ -13,6 +13,7 @@ from File_worker.detectors.text_detector import TextDetector
 from File_worker.detectors.sevenz_detector import SevenZDetector
 from File_worker.utils.ocr_extract import *
 from File_worker.utils.encrypt_detector import *
+from File_worker.detectors.ocr_client import *
 import requests
 import shutil
 import tempfile
@@ -68,6 +69,51 @@ def check_encryption(filepath, ftype):
 
 OCR_SERVICE_URL = "http://192.168.124.78:5110/ocr"
 STAMP_SERVICE_URL = "http://192.168.124.78:5110/stamp"
+def call_ocr_service_new(image_paths):
+    ####### ocr 处理 多图片处理#######
+    ocr_detail =[] 
+    ocr_text = ""
+    for p in image_paths:
+        output = ocr_identify(p)
+        info = extract_ocr_info_v2(output) # 从提取数据的图片中获取数据信息
+        ocr_detail.append({"image": p, "ocr": info})
+        ocr_text += info.get("full_text", "")
+    return ocr_text, ocr_detail
+
+
+def stmp_identify(image_path):
+    API_URL = "http://192.168.124.78:8081/seal-recognition" # 服务URL
+
+    with open(image_path, "rb") as file:
+        file_bytes = file.read()
+        file_data = base64.b64encode(file_bytes).decode("ascii")
+
+    payload = {"file": file_data, "fileType": 1}
+
+    response = requests.post(API_URL, json=payload)
+    print(response.status_code)
+    if response.status_code == 200:
+        result = response.json()["result"]
+        for i, res in enumerate(result["sealRecResults"]):
+            return res["prunedResult"]
+    else:
+        print(f"请求状态码:{response.status_code}")
+        return {}
+
+def call_stamp_service_new(image_paths):
+    stamp_all = []
+    stamp_detail = ""
+    for p in image_paths:
+        output = stmp_identify(p)
+        stamp_info = detect_stamp_from_image_new(output) # 印章识别
+        if stamp_info:
+            stamp_all.append({"image": p, "stamps": stamp_info})
+        for i in stamp_info:
+            stamp_detail += i.get("text","") + "\n"
+    stamp_detected = len(stamp_detail) > 0
+    return stamp_all,stamp_detail,stamp_detected
+
+
 
 def call_ocr_service(img_paths):
     files= [] # 文件信息
@@ -147,6 +193,7 @@ def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processo
         "red_header": False,
         "stamp_detected": False,
         "stamp_detail": [],
+        "stamp_text":"",
         "children": [],
     }
 
@@ -200,16 +247,17 @@ def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processo
 
         if tmp_files:
             # OCR
-            ocr_text, ocr_detail = call_ocr_service(result["images"])
+            ocr_text, ocr_detail = call_ocr_service_new(result["images"])
             result["ocr_text"] = ocr_text
             result["ocr_detail"] = ocr_detail
 
             # 印章
-            stamp_detected, stamp_detail = call_stamp_service(result["images"])
-            result["stamp_detected"] = stamp_detected
-            result["stamp_detail"] = stamp_detail
+            stamp_all,stamp_detail,stamp_detected = call_stamp_service_new(result["images"])
+            result["stamp_detected"] = stamp_detected # 是否包含
+            result["stamp_detail"] = stamp_all # 印章详情
+            result["stamp_text"] = stamp_detail # 文本
 
-        # ✅ 删除自己生成的临时目录
+        # 删除自己生成的临时目录
         for d in tmp_dirs:
             shutil.rmtree(d, ignore_errors=True)
 
@@ -270,6 +318,7 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
             "ocr_text": "",
             "stamp_detected": False,
             "stamps": [],
+            "stamp_text":"",
             "download_path": filepath,
             "msg": result.get("msg", "加密文件，无法处理")
         })
@@ -287,9 +336,12 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
                 break
 
         stamps_for_img = []
+        stamp_text = ""
         for item in result.get("stamp_detail", []):
             if item.get("image") == filepath:
                 stamps_for_img = [s for s in item.get("stamps", []) if s.get("score", 0) >= 0.3]
+                for s in item.get("stamps",[]):
+                    stamp_text += s.get("text","") + "\n"
                 break
 
         img_ext = filetype
@@ -306,6 +358,7 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
             "ocr_text": ocr_text,
             "stamp_detected": len(stamps_for_img) > 0,
             "stamps": stamps_for_img,
+            "stamp_text":stamp_text,
             "download_path": filepath  # 新增统一下载字段
         })
         return rows
@@ -328,21 +381,26 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
             "ocr_text": result.get("ocr_text", ""),
             "stamp_detected": result.get("stamp_detected", False),
             "stamps": result.get("stamp_detail", []),
+            "stamp_text":result.get("stamp_text",""),
             "download_path": filepath  # 文件下载
         })
 
     # 图片级记录
     for img_path in result.get("images", []):
         stamps_for_img = []
+        stamp_text=""
         for item in result.get("stamp_detail", []):
             if item.get("image") == img_path:
                 stamps_for_img = [s for s in item.get("stamps", []) if s.get("score", 0) >= 0.3]
+                for s in item.get("stamps",[]):
+                    stamp_text += s.get("text","") + "\n"
                 break
 
         img_ocr_text = ""
         for ocr_item in result.get("ocr_detail", []):
             if ocr_item.get("image") == img_path:
                 img_ocr_text = ocr_item.get("ocr", {}).get("full_text", "")
+
                 break
         img_ext = os.path.splitext(img_path)[-1].lower().replace(".", "")
         rows.append({
@@ -358,6 +416,7 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
             "ocr_text": img_ocr_text,
             "stamp_detected": len(stamps_for_img) > 0,
             "stamps": stamps_for_img,
+            "stamp_text":stamp_text,
             "download_path": img_path  # 图片下载
         })
 
@@ -371,7 +430,7 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
 
     return rows
 
-def run_file(filepath, magic_str=None, file_set=None, workdir='/opt/openfbi/pylibs/File_worker/'):
+def run_file(filepath, magic_str=None, file_set=None, workdir='/tmp/service/'):
     workdir = workdir or os.path.join(os.getcwd(), "tmp_processor")
     res,files_flatten = process_file(filepath, magic_str, file_set, workdir)
     return res,files_flatten
@@ -380,10 +439,10 @@ if __name__ == "__main__":
     #res,files_flatten = run_file("/data/files/65/6533623063343432393866633163313439616662663463383939366662393234",magic_str = "JPEG image data,JFIF standard 1.01,resilution,density 72*72",workdir = '/opt/openfbi/pylibs/File_worker/')
     #print(res)
 
-    res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/加密111_2.7z",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
+    res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/533856970.jpg",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
     print(res)
-    with open("./11.json","w")as fp:
-        json.dump(res,fp)
+    #with open("./11.json","w")as fp:
+    #    json.dump(res,fp)
     #print(files_flatten)
 
 

@@ -19,7 +19,7 @@ except ImportError:
     Presentation = None
 from .base import BaseDetector  # 继承自你的 BaseDetector
 
-def generate_image_dir(filepath, base_dir="./images"):
+def generate_image_dir(filepath, base_dir="/tmp/service/images"):
     """
     根据源文件生成图片保存目录
     """
@@ -87,7 +87,7 @@ class OfficeDetector(BaseDetector):
 
         return text
 
-    def extract_images(self, filepath, base_dir="/home/rzc/File_worker/images", ftype=None):
+    def extract_images(self, filepath, base_dir="/tmp/service/images", ftype=None):
         """
         保存 Office 内嵌图片到 base_dir/源文件名/ 
         返回图片路径列表

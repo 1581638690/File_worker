@@ -10,8 +10,8 @@ def extract_ocr_info_v2(ocr_output):
     if not ocr_output:
         return result
 
-    data = ocr_output.get("res",{})
-
+    #data = ocr_output.get("res",{})
+    data = ocr_output
     # --- 文本块 ---
     for blk in data.get("parsing_res_list", []):
         content = blk.get("block_content") or ""
@@ -65,8 +65,8 @@ def detect_stamp_from_image(image_path,SEAL_PIPE):
 
         for res in output:
             data = res._to_json()
-            data_dic = data.get("res",{})
-
+            #data_dic = data.get("res",{})
+            data_dic = data
             seal_list = data_dic.get("seal_res_list",[])
             for seal in seal_list:
                 texts = seal.get("rec_texts",[])
@@ -77,6 +77,33 @@ def detect_stamp_from_image(image_path,SEAL_PIPE):
                         "score": score,
                         #"poly": seal.get("dt_polys", [])
                     })
+        return stamp_texts
+
+    except:
+        return []
+    
+
+def detect_stamp_from_image_new(output):
+    """
+    对单张图片执行印章检测，返回印章文字及分数
+    """
+    try:
+        stamp_texts = []
+
+
+
+            #data_dic = data.get("res",{})
+        data_dic = output
+        seal_list = data_dic.get("seal_res_list",[])
+        for seal in seal_list:
+            texts = seal.get("rec_texts",[])
+            scores = seal.get("rec_scores", [])
+            for txt, score in zip(texts, scores):
+                stamp_texts.append({
+                    "text": txt,
+                    "score": score,
+                    #"poly": seal.get("dt_polys", [])
+                })
         return stamp_texts
 
     except:

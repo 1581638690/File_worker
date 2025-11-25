@@ -3,7 +3,7 @@ from .base import BaseDetector
 import os
 import fitz  # PyMuPDF for image extraction
 from pathlib import Path
-def generate_image_dir(filepath, base_dir="./images"):
+def generate_image_dir(filepath, base_dir="/tmp/service/images"):
     """
     根据源文件生成图片保存目录
     """
@@ -26,7 +26,7 @@ class PdfDetector(BaseDetector):
         except Exception:
             return ""
 
-    def extract_images(self, filepath, base_dir="/opt/openfbi/pylibs/File_worker/images", ftype=None):
+    def extract_images(self, filepath, base_dir="/tmp/service/images", ftype=None):
         save_dir = generate_image_dir(filepath, base_dir)
         imgs = []
         try:
