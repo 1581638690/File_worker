@@ -13,13 +13,14 @@ from File_worker.detectors.text_detector import TextDetector
 from File_worker.detectors.sevenz_detector import SevenZDetector
 from File_worker.utils.ocr_extract import *
 from File_worker.utils.encrypt_detector import *
-from File_worker.detectors.ocr_client import *
+#from File_worker.detectors.ocr_client import *
+from File_worker.detectors.redhead_detector import *
+from File_worker.utils.ssdb_config import *
 import requests
 import shutil
 import tempfile
-# 初始化 OCR 与印章识别
-#OCR = OCRCore.get_ocr()
-#SEAL_PIPE = SEALReco.get_seal()
+import base64
+
 
 # 类型处理器表
 DETECTOR_TABLE = {
@@ -65,10 +66,33 @@ def check_encryption(filepath, ftype):
     return False, ""
 
 
+#def down_config(strs):
+    #ocr_config(key)
 
 
-OCR_SERVICE_URL = "http://192.168.124.78:5110/ocr"
-STAMP_SERVICE_URL = "http://192.168.124.78:5110/stamp"
+def ocr_identify(image_path):
+    API_URL = "http://192.168.124.78:8080/layout-parsing" # 服务URL
+
+    # 对本地图像进行Base64编码
+    with open(image_path, "rb") as file:
+        image_bytes = file.read()
+        image_data = base64.b64encode(image_bytes).decode("ascii")
+
+    payload = {
+        "file": image_data, # Base64编码的文件内容或者文件URL
+        "fileType": 1, # 文件类型，1表示图像文件
+    }
+
+    # 调用API
+    response = requests.post(API_URL, json=payload)
+
+    # 处理接口返回数据
+    if response.status_code == 200:
+        result = response.json()["result"]
+        for i, res in enumerate(result["layoutParsingResults"]):
+            return res["prunedResult"]
+    print(f"ocr请求状态码：{response.status_code}")
+    return {}
 def call_ocr_service_new(image_paths):
     ####### ocr 处理 多图片处理#######
     ocr_detail =[] 
@@ -97,7 +121,7 @@ def stmp_identify(image_path):
         for i, res in enumerate(result["sealRecResults"]):
             return res["prunedResult"]
     else:
-        print(f"请求状态码:{response.status_code}")
+        print(f"印章请求状态码：{response.status_code}")
         return {}
 
 def call_stamp_service_new(image_paths):
@@ -257,6 +281,10 @@ def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processo
             result["stamp_detail"] = stamp_all # 印章详情
             result["stamp_text"] = stamp_detail # 文本
 
+        # 进行红头文件识别
+        
+        is_red_head, red_ratio = is_red_image(img_path, top_ratio=0.25, red_ratio_threshold=0.01)
+        result["red_header"] = is_red_head
         # 删除自己生成的临时目录
         for d in tmp_dirs:
             shutil.rmtree(d, ignore_errors=True)
@@ -357,6 +385,7 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
             "file_text": "",
             "ocr_text": ocr_text,
             "stamp_detected": len(stamps_for_img) > 0,
+            "red_header":result.get("red_header"),
             "stamps": stamps_for_img,
             "stamp_text":stamp_text,
             "download_path": filepath  # 新增统一下载字段
@@ -414,6 +443,7 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
             "image_path": img_path,
             "file_text": "",
             "ocr_text": img_ocr_text,
+            "req_header":result.get("red_header"),
             "stamp_detected": len(stamps_for_img) > 0,
             "stamps": stamps_for_img,
             "stamp_text":stamp_text,
@@ -439,7 +469,8 @@ if __name__ == "__main__":
     #res,files_flatten = run_file("/data/files/65/6533623063343432393866633163313439616662663463383939366662393234",magic_str = "JPEG image data,JFIF standard 1.01,resilution,density 72*72",workdir = '/opt/openfbi/pylibs/File_worker/')
     #print(res)
 
-    res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/533856970.jpg",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
+    #res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/2eefa80f-f3bd-4e4f-8278-fb336f0c1d59.png",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
+    res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/2eefa80f-f3bd-4e4f-8278-fb336f0c1d59.png",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
     print(res)
     #with open("./11.json","w")as fp:
     #    json.dump(res,fp)

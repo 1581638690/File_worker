@@ -1,1 +1,13 @@
-python-docx openpyxl python-pptx pdfplumber pillow pytesseract rarfile python-magic PyMuPDF py7zr libarchive-c nats-py nats-server
+python-docx 
+openpyxl 
+python-pptx 
+pdfplumber 
+pillow 
+pytesseract 
+rarfile 
+python-magic 
+PyMuPDF 
+py7zr 
+libarchive-c 
+nats-py 
+nats-server
