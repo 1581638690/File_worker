@@ -11,3 +11,6 @@ py7zr
 libarchive-c 
 nats-py 
 nats-server
+simhash
+tlsh
+sentence-transformers --no-deps

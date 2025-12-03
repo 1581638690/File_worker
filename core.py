@@ -13,7 +13,6 @@ from File_worker.detectors.text_detector import TextDetector
 from File_worker.detectors.sevenz_detector import SevenZDetector
 from File_worker.utils.ocr_extract import *
 from File_worker.utils.encrypt_detector import *
-#from File_worker.detectors.ocr_client import *
 from File_worker.detectors.redhead_detector import *
 from File_worker.utils.ssdb_config import *
 import requests
@@ -139,32 +138,32 @@ def call_stamp_service_new(image_paths):
 
 
 
-def call_ocr_service(img_paths):
-    files= [] # 文件信息
-    data = [] # 文件原路径信息
-    for p in img_paths:
-        files.append((
-            "files",
-            (os.path.basename(p), open(p, "rb"), "image/png")
-        ))
-        data.append((("orig_paths"),p))
+# def call_ocr_service(img_paths):
+#     files= [] # 文件信息
+#     data = [] # 文件原路径信息
+#     for p in img_paths:
+#         files.append((
+#             "files",
+#             (os.path.basename(p), open(p, "rb"), "image/png")
+#         ))
+#         data.append((("orig_paths"),p))
     
-    res = requests.post(OCR_SERVICE_URL, files=files,data =data)
-    res_json = res.json()
-    return res_json.get("ocr_text", ""), res_json.get("ocr_detail", [])
+#     res = requests.post(OCR_SERVICE_URL, files=files,data =data)
+#     res_json = res.json()
+#     return res_json.get("ocr_text", ""), res_json.get("ocr_detail", [])
 
-def call_stamp_service(img_paths):
-    files= [] # 文件信息
-    data = [] # 文件原路径信息
-    for p in img_paths:
-        files.append((
-            "files",
-            (os.path.basename(p), open(p, "rb"), "image/png")
-        ))
-        data.append((("orig_paths"),p))
-    res = requests.post(STAMP_SERVICE_URL, files=files,data=data)
-    res_json = res.json()
-    return res_json.get("stamp_detected", False), res_json.get("stamp_detail", [])
+# def call_stamp_service(img_paths):
+#     files= [] # 文件信息
+#     data = [] # 文件原路径信息
+#     for p in img_paths:
+#         files.append((
+#             "files",
+#             (os.path.basename(p), open(p, "rb"), "image/png")
+#         ))
+#         data.append((("orig_paths"),p))
+#     res = requests.post(STAMP_SERVICE_URL, files=files,data=data)
+#     res_json = res.json()
+#     return res_json.get("stamp_detected", False), res_json.get("stamp_detail", [])
 
 # 创建临时文件信息
 def prepare_for_ocr(filepath, ftype):
@@ -284,14 +283,14 @@ def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processo
         # 进行红头文件识别
         
         is_red_head, red_ratio = is_red_image(img_path, top_ratio=0.25, red_ratio_threshold=0.01)
-        result["red_header"] = is_red_head
+        result["req_header"] = is_red_head
         # 删除自己生成的临时目录
         for d in tmp_dirs:
             shutil.rmtree(d, ignore_errors=True)
 
-    files_flatten = flatten_image_data(result)
+    
 
-    return result, files_flatten
+    return result
 
 ################## 分级目录递归解压####################
 import uuid
@@ -443,7 +442,7 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
             "image_path": img_path,
             "file_text": "",
             "ocr_text": img_ocr_text,
-            "req_header":result.get("red_header"),
+            "red_header":result.get("red_header"),
             "stamp_detected": len(stamps_for_img) > 0,
             "stamps": stamps_for_img,
             "stamp_text":stamp_text,
@@ -462,7 +461,8 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
 
 def run_file(filepath, magic_str=None, file_set=None, workdir='/tmp/service/'):
     workdir = workdir or os.path.join(os.getcwd(), "tmp_processor")
-    res,files_flatten = process_file(filepath, magic_str, file_set, workdir)
+    res = process_file(filepath, magic_str, file_set, workdir)
+    files_flatten = flatten_image_data(res)
     return res,files_flatten
 
 if __name__ == "__main__":
@@ -470,7 +470,7 @@ if __name__ == "__main__":
     #print(res)
 
     #res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/2eefa80f-f3bd-4e4f-8278-fb336f0c1d59.png",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
-    res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/2eefa80f-f3bd-4e4f-8278-fb336f0c1d59.png",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
+    res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/1111.pdf",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
     print(res)
     #with open("./11.json","w")as fp:
     #    json.dump(res,fp)
