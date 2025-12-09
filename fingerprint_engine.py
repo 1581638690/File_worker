@@ -24,7 +24,6 @@ from File_worker.utils.embedding_con import *
 
 AI_CLIENT = Llama_Cpp_AIService(
     embedding_base_url= "http://192.168.124.78:8084",
-    rerank_base_url = "http://192.168.124.78:8085",
     api_key="no-key"
 
 )
@@ -63,7 +62,7 @@ def flatten_result_text(result:Dict) -> str:
     parts.append(stamp_text)
 
     # 递归children
-    children_msg = result.get("children")
+    children_msg = result.get("children",[])
     if isinstance(children_msg,str):
         children_msg = json.loads(children_msg)
     for ch in children_msg:
@@ -254,7 +253,7 @@ def generate_fingerprints_from_result(result: Dict, compute_file_sha: bool = Tru
     #out["vector"] = text_to_vector(txt_for_vec)
     # 实现向量化
     out["vector"] = embed_text_in_chunks(combined_text, chunk_size=512, overlap=50)
-
+    print(len(out["vector"]))
     # 带上基本元信息
     out["file_id"] = result.get("filepath")  # 或者你系统的 fileinfo id
     out["filename"] = result.get("filename")
@@ -263,60 +262,121 @@ def generate_fingerprints_from_result(result: Dict, compute_file_sha: bool = Tru
     return out
 
 # 用作udf匹配指纹信息
-def match_fingerprint(mysql_df,ckh_df,file_fp):
+def match_fingerprint_with_docs(mysql_df, ckh_df, file_fp, thresholds=None):
     """
-    1.查询mysql规则信息 df1
-    2.查询clickhouse的指纹记录 df2
-    3.当前文件指纹，这个自己读取就完事了
+    根据规则匹配文件指纹，返回匹配规则及相关文档信息。
+
+    :param mysql_df: MySQL规则表 DataFrame
+    :param ckh_df: ClickHouse 文件指纹表 DataFrame
+    :param file_fp: 当前上传文件指纹 dict
+    :param thresholds: 可选默认阈值覆盖规则表
+    :return: List[Dict], 每个元素包含:
+             {"rule_name":..., "match_type":..., "score":..., "related_file_id":..., "filename":...}
     """
+    if thresholds is None:
+        thresholds = {
+            "simhash_hamming": 5,
+            "vector_cos": 0.82,
+            "segment_overlap": 0.4
+        }
+
     matches = []
 
-    for index,rule in mysql_df.iterrows():
-        if not rule["enabled"]:
+    for _, rule in mysql_df.iterrows():
+        if not rule.get("enabled", 1):
             continue
-        r_name = rule["rule_name"]
-        r_type = rule["match_type"]
-        threshold = rule["threshold"]
-        
-        if r_type == "SHA256":
-            # 精确匹配已有指纹信息
-            sha256_list = ckh_df["sha256"].to_list()
-            for ckh_sha256 in sha256_list:
-                if file_fp.get("sha256") and ckh_sha256 and file_fp["sha256"] == ckh_sha256:
-                    matches.append(rule)
+
+        r_name = rule.get("rule_name", "Unnamed Rule")
+        r_type = rule.get("match_type", "")
+        threshold = rule.get("threshold", None)
+
+        # 若规则没有 threshold，就用默认阈值
+        if threshold is None:
+            if r_type == "SIMHASH":
+                threshold = thresholds["simhash_hamming"]
+            elif r_type == "VECTOR":
+                threshold = thresholds["vector_cos"]
+            elif r_type == "SEGMENT":
+                threshold = thresholds["segment_overlap"]
+
+        # SHA256 精确匹配
+        if r_type.upper() == "SHA256":
+            for _, rec in ckh_df.iterrows():
+                if file_fp.get("sha256") and rec.get("sha256") and file_fp["sha256"] == rec["sha256"]:
+                    matches.append({
+                        "rule_name": r_name,
+                        "match_type": "SHA256",
+                        "score": 1.0,
+                        "related_file_id": rec.get("id"),
+                        "filename": rec.get("filename")
+                    })
                     break
-        
-        elif r_type == "SIMHASH":
-            # 模糊匹配已有指纹信息
-            simhash_list = ckh_df["simhashs"].to_list()
-            for sim in simhash_list:
-                if sim:
-                    dist = hamming_distance_int(file_fp.get("simhash",0),sim)
+
+        # SIMHASH 近似匹配
+        elif r_type.upper() == "SIMHASH":
+            for _, rec in ckh_df.iterrows():
+                sim = int(rec.get("simhashs")) # 库中是字符串
+                if sim is not None:
+                    dist = hamming_distance_int(file_fp.get("simhash", 0), sim)
                     if dist <= threshold:
-                        matches.append(rule)
+                        score = max(0.0, 1.0 - dist / max(1, threshold))
+                        matches.append({
+                            "rule_name": r_name,
+                            "match_type": "SIMHASH",
+                            "score": score,
+                            "related_file_id": rec.get("id"),
+                            "filename": rec.get("filename")
+                        })
                         break
-        elif r_type == "SEGMENT":
-            segment_list = ckh_df["segment_hashes"].to_list() # 获取分段哈希
-            for segment in segment_list:
-                if isinstance(segment,str):
-                    segment = json.loads(segment)
-                set_a = set(file_fp.get("segment_hashes",[]))
+
+        # SEGMENT 分段匹配
+        elif r_type.upper() == "SEGMENT":
+            file_segs = set(file_fp.get("segment_hashes", []))
+            for _, rec in ckh_df.iterrows():
+                segment = rec.get("segment_hashes", [])
+                if isinstance(segment, str):
+                    try:
+                        segment = json.loads(segment)
+                    except:
+                        segment = []
                 set_b = set(segment)
-                overlap = len(set_a & set_b)
-                if overlap >= threshold:
-                    matches.append(rule)
-                    break
+                if set_b:
+                    overlap_ratio = len(file_segs & set_b) / max(len(file_segs | set_b), 1)
+                    if overlap_ratio >= threshold:
+                        matches.append({
+                            "rule_name": r_name,
+                            "match_type": "SEGMENT",
+                            "score": overlap_ratio,
+                            "related_file_id": rec.get("file_id"),
+                            "filename": rec.get("filename")
+                        })
+                        break
 
-        elif r_type == "VECTOR":
-            vector_list = ckh_df["vector"].to_list()
-            for vec in vector_list:
-                if isinstance(vec,str): # 表存储的是字符串信息
-                    vec = json.dumps(vec)
-
-                cos = cosine_similarity(file_fp.get("vector",[]),)
+        # VECTOR 语义向量匹配
+        elif r_type.upper() == "VECTOR":
+            file_vec = file_fp.get("vector", [])
+            if not file_vec:
+                continue
+            for _, rec in ckh_df.iterrows():
+                vec = rec.get("vector", [])
+                if isinstance(vec, str):
+                    try:
+                        vec = json.loads(vec)
+                    except:
+                        vec = []
+                if not vec:
+                    continue
+                cos = cosine_similarity(file_vec, vec)
                 if cos >= threshold:
-                    matches.append(rule)
+                    matches.append({
+                        "rule_name": r_name,
+                        "match_type": "VECTOR",
+                        "score": cos,
+                        "related_file_id": rec.get("id"),
+                        "filename": rec.get("filename")
+                    })
                     break
+
     return matches
 
 def test_fingerprint_pipeline(file1, file2, workdir="/tmp/fp_test"):
@@ -388,7 +448,12 @@ def test_fingerprint_pipeline(file1, file2, workdir="/tmp/fp_test"):
         print("⚠️ 语义中度相似")
     else:
         print("❌ 语义相似度低")
-
+    vectors = []
+    vectors.append(fp1["vector"])
+    vectors.append(fp2["vector"])
+    file_ids = []
+    cate = cluster_vectors(file_ids, vectors)
+    print("类别信息：",cate)
     print("\n======= 测试结束 =======")
 
 """
@@ -401,8 +466,64 @@ OCR 图片转文字内容匹配
 垃圾文件去重与归档
 """
 
+
+######################### 语义向量分类 ###################
+def cluster_vectors(file_ids, vectors):
+    n = len(vectors)
+    categories = [-1] * n
+    next_cat = 1
+    from tqdm import tqdm
+    for i in tqdm(range(n), desc="分类中…"):
+        if categories[i] != -1:
+            continue
+
+        categories[i] = next_cat
+
+        for j in range(i + 1, n):
+            if categories[j] != -1:
+                continue
+            #json.loads(vectors[i])
+            sim = cosine_similarity(vectors[i], vectors[j])
+            if sim >= 0.70:
+                categories[j] = next_cat
+
+        next_cat += 1
+
+    return categories
+
+
+#from collections import defaultdict,deque
+#from sklearn.metrics.pairwise import cosine_similarity
+
+
 if __name__ == "__main__":
     import datetime
-    #test_fingerprint_pipeline("/opt/openfbi/pylibs/File_worker/test_file/CRUD-postgresql - 副本.docx","/opt/openfbi/pylibs/File_worker/test_file/CRUD-postgresql.docx")
-    o = {'filename': '6533623063343432393866633163313439616662663463383939366662393234', 'filepath': '/data/files/65/6533623063343432393866633163313439616662663463383939366662393234', 'filetype': 'jpg', 'sha256': '6533623063343432393866633163313439616662663463383939366662393234', 'text': '', 'ocr_text': '', 'ocr_detail': '[]', 'images': '["\\/data\\/files\\/65\\/6533623063343432393866633163313439616662663463383939366662393234"]', 'red_header': '否', 'stamp_detected': '否', 'stamp_detail': '[]', 'stamp_text': '', 'children': '[]', 'req_header': False, 'size': 1022, 'state': 'TRUNCATED', 'srcip': '72.233.69.5', 'app_proto': 'http', 'srcport': 80, 'dstip': '192.168.4.120', 'dstport': 4642, 'url': 'http://72.233.69.5:80/libhtp::request_uri_not_seen', 'parameter': '', 'id': '1764667249251387558', 'encrypted': '否', 'timestamp': datetime.datetime(2025, 12, 2, 17, 20, 49, 237538), 'msg': ''}
-    generate_fingerprints_from_result(o)
+    #test_fingerprint_pipeline("/opt/openfbi/pylibs/File_worker/test_file/25339190041004130573-电子发票.pdf","/opt/openfbi/pylibs/File_worker/test_file/25359134682000718615-电子发票.pdf")
+    #o = {'filename': '6533623063343432393866633163313439616662663463383939366662393234', 'filepath': '/data/files/65/6533623063343432393866633163313439616662663463383939366662393234', 'filetype': 'jpg', 'sha256': '6533623063343432393866633163313439616662663463383939366662393234', 'text': '', 'ocr_text': '', 'ocr_detail': '[]', 'images': '["\\/data\\/files\\/65\\/6533623063343432393866633163313439616662663463383939366662393234"]', 'red_header': '否', 'stamp_detected': '否', 'stamp_detail': '[]', 'stamp_text': '', 'children': '[]', 'req_header': False, 'size': 1022, 'state': 'TRUNCATED', 'srcip': '72.233.69.5', 'app_proto': 'http', 'srcport': 80, 'dstip': '192.168.4.120', 'dstport': 4642, 'url': 'http://72.233.69.5:80/libhtp::request_uri_not_seen', 'parameter': '', 'id': '1764667249251387558', 'encrypted': '否', 'timestamp': datetime.datetime(2025, 12, 2, 17, 20, 49, 237538), 'msg': ''}
+    #generate_fingerprints_from_result(o)
+    file_path = [
+		"test_file/1111.pdf",
+		"test_file/1111.zip",
+		"test_file/533856970.jpg",
+		"test_file/加密111_2.7z",
+		"test_file/加密111.7z",
+		"test_file/加密111.pdf",
+		"test_file/25339190041004130573-电子发票.pdf",
+		"test_file/25359134682000718615-电子发票.pdf",
+		"test_file/CRUD-postgresql.docx",
+		"test_file/webwxgetmsgimg.jpeg"
+
+	]
+    #from .core import process_file
+    dic = {"vector":[],"filename":[]}
+    
+    for i in file_path:
+        res = process_file(f"/opt/openfbi/pylibs/File_worker/{i}")
+        out = generate_fingerprints_from_result(res)
+        dic["vector"] = out.get("vector")
+        dic["filename"] = out.get("filename")
+    
+    # 然后 循环 dic 进行聚类分析
+    print(len(dic))
+    cate = cluster_vectors(dic["filename"],dic["vector"])
+    print(cate)

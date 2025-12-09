@@ -13,4 +13,5 @@ nats-py
 nats-server
 simhash
 tlsh
-sentence-transformers --no-deps
+pymilvus
+scipy==1.11.1 --no-cache-dir
