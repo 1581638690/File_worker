@@ -26,7 +26,7 @@ logger.addHandler(file_handler)
 
 class VectorSerive:
     def __init__(self,
-                 milvus_host="192.168.124.250",
+                 milvus_host="127.0.0.1",
                  milvus_port="19530",
                  embedding_service_url="http://192.168.124.78:8084",
                  api_key="no-key",
@@ -184,7 +184,7 @@ class VectorSerive:
             rows.append(row)
 
         if rows:
-            #logger.info(f"插入数据文件名：{[(f['file'], f['id']) for f in data_list]}")
+            #logger.info(f"插入数据文件名：{[(f['file'], f['id']) for f in rows]}")
             res = self.client.insert(collection_name=self.collection_name, data=rows)
         else:
             res = {}
@@ -321,6 +321,8 @@ if __name__ == "__main__":
         datas.append(finger)
         #oc_id = vs.insert_document(finger)
        # print(f"Vector Length: {len(vector)}")
+    print(datas)
+    vs.connect_milvus()
     ids = vs.batch_insert_documents(datas)
     print(ids)
     # 用某条文本向量搜索相似文档

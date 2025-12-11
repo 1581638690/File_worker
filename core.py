@@ -69,8 +69,8 @@ def check_encryption(filepath, ftype):
     #ocr_config(key)
 
 
-def ocr_identify(image_path):
-    API_URL = "http://192.168.124.78:8080/layout-parsing" # 服务URL
+def ocr_identify(image_path,API_URL="http://192.168.124.78:8080/layout-parsing"):
+    #API_URL = "http://192.168.124.78:8080/layout-parsing" # 服务URL
 
     # 对本地图像进行Base64编码
     with open(image_path, "rb") as file:
@@ -92,20 +92,20 @@ def ocr_identify(image_path):
             return res["prunedResult"]
     print(f"ocr请求状态码：{response.status_code}")
     return {}
-def call_ocr_service_new(image_paths):
+def call_ocr_service_new(image_paths,model_url = None):
     ####### ocr 处理 多图片处理#######
     ocr_detail =[] 
     ocr_text = ""
     for p in image_paths:
-        output = ocr_identify(p)
+        output = ocr_identify(p,API_URL=model_url)
         info = extract_ocr_info_v2(output) # 从提取数据的图片中获取数据信息
         ocr_detail.append({"image": p, "ocr": info})
         ocr_text += info.get("full_text", "")
     return ocr_text, ocr_detail
 
 
-def stmp_identify(image_path):
-    API_URL = "http://192.168.124.78:8081/seal-recognition" # 服务URL
+def stmp_identify(image_path,API_URL="http://192.168.124.78:8081/seal-recognition"):
+    #API_URL = "http://192.168.124.78:8081/seal-recognition" # 服务URL
 
     with open(image_path, "rb") as file:
         file_bytes = file.read()
@@ -123,11 +123,11 @@ def stmp_identify(image_path):
         print(f"印章请求状态码：{response.status_code}")
         return {}
 
-def call_stamp_service_new(image_paths):
+def call_stamp_service_new(image_paths,model_url = None):
     stamp_all = []
     stamp_detail = ""
     for p in image_paths:
-        output = stmp_identify(p)
+        output = stmp_identify(p,API_URL=model_url)
         stamp_info = detect_stamp_from_image_new(output) # 印章识别
         if stamp_info:
             stamp_all.append({"image": p, "stamps": stamp_info})
@@ -138,32 +138,6 @@ def call_stamp_service_new(image_paths):
 
 
 
-# def call_ocr_service(img_paths):
-#     files= [] # 文件信息
-#     data = [] # 文件原路径信息
-#     for p in img_paths:
-#         files.append((
-#             "files",
-#             (os.path.basename(p), open(p, "rb"), "image/png")
-#         ))
-#         data.append((("orig_paths"),p))
-    
-#     res = requests.post(OCR_SERVICE_URL, files=files,data =data)
-#     res_json = res.json()
-#     return res_json.get("ocr_text", ""), res_json.get("ocr_detail", [])
-
-# def call_stamp_service(img_paths):
-#     files= [] # 文件信息
-#     data = [] # 文件原路径信息
-#     for p in img_paths:
-#         files.append((
-#             "files",
-#             (os.path.basename(p), open(p, "rb"), "image/png")
-#         ))
-#         data.append((("orig_paths"),p))
-#     res = requests.post(STAMP_SERVICE_URL, files=files,data=data)
-#     res_json = res.json()
-#     return res_json.get("stamp_detected", False), res_json.get("stamp_detail", [])
 
 # 创建临时文件信息
 def prepare_for_ocr(filepath, ftype):
@@ -182,7 +156,11 @@ def prepare_for_ocr(filepath, ftype):
 
 
 ######################主文件提取入口函数#####################
-def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processor"):
+def process_file(filepath, 
+                 magic_str=None, 
+                 workdir="/tmp/service/",
+                 OCR_SERVICE_URL="http://192.168.124.78:8080/layout-parsing",
+                 STAMP_SERVICE_URL="http://192.168.124.78:8081/seal-recognition"):
     ensure_workdir(workdir)
     filename = os.path.basename(filepath)
     ftype = guess_magic_from_path(filepath, magic_str)
@@ -201,7 +179,7 @@ def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processo
             "red_header": False,
             "stamp_detected": False,
             "msg": encrypted_msg
-        }, []
+        }
 
     # 初始化返回结果
     result = {
@@ -230,11 +208,11 @@ def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processo
         for child in extracted:
             child_path = child if os.path.isabs(child) else os.path.join(workdir, child)
             try:
-                child_res, _ = process_file(child_path, None, None, workdir)
+                child_res = process_file(child_path, None, workdir,OCR_SERVICE_URL,STAMP_SERVICE_URL)
                 result["children"].append(child_res)
             except Exception:
                 continue
-        return result, []
+        return result
 
     # ----------------------------
     # 判断文件是否为图片类型
@@ -270,12 +248,12 @@ def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processo
 
         if tmp_files:
             # OCR
-            ocr_text, ocr_detail = call_ocr_service_new(result["images"])
+            ocr_text, ocr_detail = call_ocr_service_new(result["images"],model_url = OCR_SERVICE_URL)
             result["ocr_text"] = ocr_text
             result["ocr_detail"] = ocr_detail
 
             # 印章
-            stamp_all,stamp_detail,stamp_detected = call_stamp_service_new(result["images"])
+            stamp_all,stamp_detail,stamp_detected = call_stamp_service_new(result["images"],model_url = STAMP_SERVICE_URL)
             result["stamp_detected"] = stamp_detected # 是否包含
             result["stamp_detail"] = stamp_all # 印章详情
             result["stamp_text"] = stamp_detail # 文本
@@ -283,7 +261,7 @@ def process_file(filepath, magic_str=None, file_set=None, workdir="/tmp/processo
         # 进行红头文件识别
         
         is_red_head, red_ratio = is_red_image(img_path, top_ratio=0.25, red_ratio_threshold=0.01)
-        result["req_header"] = is_red_head
+        result["red_header"] = is_red_head
         # 删除自己生成的临时目录
         for d in tmp_dirs:
             shutil.rmtree(d, ignore_errors=True)
@@ -459,9 +437,9 @@ def flatten_image_data(result, parent_path=None, parent_type_hierarchy=None):
 
     return rows
 
-def run_file(filepath, magic_str=None, file_set=None, workdir='/tmp/service/'):
+def run_file(filepath, magic_str=None,workdir='/tmp/service/',OCR_SERVICE_URL="http://192.168.124.78:8080/layout-parsing",STAMP_SERVICE_URL="http://192.168.124.78:8081/seal-recognition"):
     workdir = workdir or os.path.join(os.getcwd(), "tmp_processor")
-    res = process_file(filepath, magic_str, file_set, workdir)
+    res = process_file(filepath, magic_str, workdir,OCR_SERVICE_URL,STAMP_SERVICE_URL)
     files_flatten = flatten_image_data(res)
     return res,files_flatten
 
@@ -470,7 +448,7 @@ if __name__ == "__main__":
     #print(res)
 
     #res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/2eefa80f-f3bd-4e4f-8278-fb336f0c1d59.png",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
-    res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/1111.pdf",workdir = '/opt/openfbi/pylibs/File_worker/tmp_processor')
+    res,files_flatten = run_file("/opt/openfbi/pylibs/File_worker/test_file/加密111_2.7z")
     print(res)
     #with open("./11.json","w")as fp:
     #    json.dump(res,fp)

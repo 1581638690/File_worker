@@ -310,7 +310,7 @@ def match_fingerprint_with_docs(mysql_df, ckh_df, file_fp, thresholds=None):
                         "related_file_id": rec.get("id"),
                         "filename": rec.get("filename")
                     })
-                    break
+                    #break
 
         # SIMHASH 近似匹配
         elif r_type.upper() == "SIMHASH":
@@ -327,7 +327,7 @@ def match_fingerprint_with_docs(mysql_df, ckh_df, file_fp, thresholds=None):
                             "related_file_id": rec.get("id"),
                             "filename": rec.get("filename")
                         })
-                        break
+                        #break
 
         # SEGMENT 分段匹配
         elif r_type.upper() == "SEGMENT":
@@ -350,7 +350,7 @@ def match_fingerprint_with_docs(mysql_df, ckh_df, file_fp, thresholds=None):
                             "related_file_id": rec.get("file_id"),
                             "filename": rec.get("filename")
                         })
-                        break
+                        #break
 
         # VECTOR 语义向量匹配
         elif r_type.upper() == "VECTOR":
@@ -375,7 +375,7 @@ def match_fingerprint_with_docs(mysql_df, ckh_df, file_fp, thresholds=None):
                         "related_file_id": rec.get("id"),
                         "filename": rec.get("filename")
                     })
-                    break
+                    #break
 
     return matches
 
